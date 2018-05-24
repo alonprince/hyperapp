@@ -36,14 +36,17 @@ export function app(state, actions, view, container) {
   var rootElement = (container && container.children[0]) || null
   // 把container下的第一个子元素转换成vdom，作为初始的vdom进行后续比较
   var oldNode = rootElement && recycleElement(rootElement)
+  // 生命周期队列
   var lifecycle = []
+  // 是否正在执行render函数的flag
   var skipRender
-  var isRecycling = true
+  var isRecycling = true // 是否正在重绘
   // 对state做一个浅拷贝
   var globalState = clone(state)
   // actions做包装
   var wiredActions = wireStateToActions([], globalState, clone(actions))
 
+  // 异步执行渲染函数
   scheduleRender()
 
   return wiredActions
@@ -65,7 +68,8 @@ export function app(state, actions, view, container) {
   }
 
   /**
-   * 返回vDom
+   * 返回首个非function的vdom节点
+   * 也就是返回组件下的最外层节点的vdom
    * @param {*} node 
    */
   function resolveNode(node) {
@@ -88,6 +92,7 @@ export function app(state, actions, view, container) {
       rootElement = patch(container, rootElement, oldNode, (oldNode = node))
     }
 
+    // 重绘完成
     isRecycling = false
 
     while (lifecycle.length) lifecycle.pop()()
@@ -206,6 +211,11 @@ export function app(state, actions, view, container) {
     return actions
   }
 
+  /**
+   * 获取vdom中的key
+   * 没有返回null
+   * @param {vdom} node 
+   */
   function getKey(node) {
     return node ? node.key : null
   }
@@ -337,7 +347,9 @@ export function app(state, actions, view, container) {
 
   
   /**
-   * 
+   * 更新dom
+   * 对比attr，更新attr
+   * 将生命周期函数oncreate/onupdate写入队列
    * @param {element} element 
    * @param {object} oldAttributes 旧的
    * @param {object} attributes 
@@ -351,6 +363,8 @@ export function app(state, actions, view, container) {
           ? element[name]
           : oldAttributes[name])
       ) {
+        // 如果属性为value或者checked，直接用element比对即可
+        // 否者跟oldAttr比对
         updateAttribute(
           element,
           name,
@@ -361,6 +375,8 @@ export function app(state, actions, view, container) {
       }
     }
 
+    // 如果还没绘制完成，说明是oncreate事件
+    // 否则是onupdate
     var cb = isRecycling ? attributes.oncreate : attributes.onupdate
     if (cb) {
       lifecycle.push(function() {
@@ -369,6 +385,11 @@ export function app(state, actions, view, container) {
     }
   }
 
+  /**
+   * 递归执行ondestroy
+   * @param {element} element 
+   * @param {vdom} node 
+   */
   function removeChildren(element, node) {
     var attributes = node.attributes
     if (attributes) {
@@ -384,7 +405,7 @@ export function app(state, actions, view, container) {
   }
 
   /**
-   * 
+   * 删掉相应的dom元素
    * @param {*} parent 
    * @param {*} element 
    * @param {*} node 
@@ -415,15 +436,18 @@ export function app(state, actions, view, container) {
       // 如果新旧dom相等，说明没变化，不做任何操作
     } else if (oldNode == null || oldNode.nodeName !== node.nodeName) {
       // 如果旧的vdom为空
-      // 或者标签类型发生了改变
+      // 或者根节点标签类型发生了改变
+      // 这两种情况全部重新生成dom树
 
       // 创建element元素，并设置attribute
       var newElement = createElement(node, isSvg)
+      // 直接插入父级
       parent.insertBefore(newElement, element)
 
       if (oldNode != null) {
         // 这个地方是当标签类型发生了变化
         // 且旧的vdom不为空的时候
+        // 删掉旧的根节点，且触发ondestroy和onremove
         removeElement(parent, element, oldNode)
       }
 
@@ -432,6 +456,9 @@ export function app(state, actions, view, container) {
       // 说明之前的是textnode
       element.nodeValue = node
     } else {
+      // 这种情况是根节点有变化
+      // 且非首次渲染
+      // 更新根节点的attr
       updateElement(
         element,
         oldNode.attributes,
@@ -439,17 +466,32 @@ export function app(state, actions, view, container) {
         (isSvg = isSvg || node.nodeName === "svg")
       )
 
+      // =========================  以上的操作全部针对根节点的  ============================================
+      // =========================  接下来开始比较children的内容  =========================================
+
+      // diff算法
+      // 重点看
+
       var oldKeyed = {}
       var newKeyed = {}
       var oldElements = []
+      // 老的vdom中children列表
       var oldChildren = oldNode.children
+      // 新的children
       var children = node.children
 
+      // 循环老的vdom children
+      // 主要目的是把oldVdom中所有有key的都找出来
+      // 然后把所有旧的element对象都存起来
       for (var i = 0; i < oldChildren.length; i++) {
+        // 将element的children按老的vdom中children的顺序写入oldElements
         oldElements[i] = element.childNodes[i]
 
+        // 旧的child的key
         var oldKey = getKey(oldChildren[i])
         if (oldKey != null) {
+          // 如果之前就存在key
+          // 按key存入dom节点和vdom节点
           oldKeyed[oldKey] = [oldElements[i], oldChildren[i]]
         }
       }
@@ -457,6 +499,7 @@ export function app(state, actions, view, container) {
       var i = 0
       var k = 0
 
+      // 循环新的children节点
       while (k < children.length) {
         var oldKey = getKey(oldChildren[i])
         var newKey = getKey((children[k] = resolveNode(children[k])))
@@ -466,27 +509,46 @@ export function app(state, actions, view, container) {
           continue
         }
 
+        // key相等，但是index不等的情况
         if (newKey != null && newKey === getKey(oldChildren[i + 1])) {
+          // 如果新的vdom上有key, 且等于旧的vChildren中的下一个
           if (oldKey == null) {
+            // 且当前顺位的oldVdom上没有key需要比较
+            // 直接删掉旧的dom
             removeElement(element, oldElements[i], oldChildren[i])
           }
+          // 然后比较下一个oldVdom节点
           i++
           continue
         }
 
+        // 新的vdom没有key
+        // 或者第一次渲染的时候
         if (newKey == null || isRecycling) {
+          console.log(i, k, 'isRe')
           if (oldKey == null) {
+            // 当isRecycling为true，也就是首次加载的时候
+            // oldKey必为null
+            // 直接更新这个元素，并且进入下一轮对比
+            // 这个时候相当于只比较层级+index
             patch(element, oldElements[i], oldChildren[i], children[k], isSvg)
             k++
           }
+          // 反之，则当newKey为null，但是oldKey有值的时候
+          // 这里的i++，就是把当前这个oldVdom留给后来的newVdom去对比
           i++
         } else {
+          // 从之前保存的所有带key的[dom, vdom]集合中取出新的key对应的集合
           var keyedNode = oldKeyed[newKey] || []
 
+          // 如果旧的key等于新的key
           if (oldKey === newKey) {
+            // 说明就是我们要找的那个vdom
+            // 对他做更新操作
             patch(element, keyedNode[0], keyedNode[1], children[k], isSvg)
             i++
           } else if (keyedNode[0]) {
+            console.log(keyedNode[0], oldElements[i], i, oldKey, newKey);
             patch(
               element,
               element.insertBefore(keyedNode[0], oldElements[i]),

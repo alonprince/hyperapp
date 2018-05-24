@@ -28,7 +28,8 @@
     "minify": "uglifyjs dist/hyperapp.js -o dist/hyperapp.js -mc pure_funcs=['Object.defineProperty'] --source-map includeSources,url=hyperapp.js.map",
     "prepare": "npm run build",
     "format": "prettier --write {src,test}/**/*.js {,test/ts/}*.{ts,tsx}",
-    "release": "npm run build && npm test && git commit -am $npm_package_version && git tag $npm_package_version && git push && git push --tags && npm publish"
+    "release": "npm run build && npm test && git commit -am $npm_package_version && git tag $npm_package_version && git push && git push --tags && npm publish",
+    "dev": "parcel playground/index.html"
   },
   "babel": {
     "presets": "env",
@@ -38,13 +39,23 @@
         {
           "pragma": "h"
         }
+      ],
+      [
+        "transform-runtime",
+        {
+          "polyfill": false,
+          "regenerator": true
+        }
       ]
     ]
   },
   "devDependencies": {
     "babel-plugin-transform-react-jsx": "^6.24.1",
+    "babel-plugin-transform-runtime": "^6.23.0",
     "babel-preset-env": "^1.6.1",
+    "babel-runtime": "^6.26.0",
     "jest": "^22.4.3",
+    "parcel-bundler": "^1.8.1",
     "prettier": "^1.11.1",
     "rollup": "^0.57.1",
     "typescript": "2.8.1",
@@ -52,5 +63,9 @@
   },
   "prettier": {
     "semi": false
+  },
+  "dependencies": {
+    "animate.css": "^3.6.1",
+    "hyperapp": "^1.2.5"
   }
 }
